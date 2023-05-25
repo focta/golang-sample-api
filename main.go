@@ -1,99 +1,56 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"os"
 
-	"github.com/gorilla/mux"
-	"database/sql"
-	_ "github.com/go-sql-driver/mysql"
+	"golang.org/x/sync/errgroup"
 )
 
-type Article struct {
-	Title   string `json:"Title"`
-	Desc    string `json:"desc"`
-	Content string `json:"content"`
-}
-
-type Articles []Article
-
-type User struct {
-	Id int64 `json:"id"`
-	Name string `json:"name"`
-	ScreenName string `json:"screen_name"`
-	Email string `json:"email"`
-	EmailVerifiedAt string `json:"email_verified_at"`
-	Password string `json:"password"`
-	RememberToken string `json:"remember_token"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-}
-
-
-func allArticles(w http.ResponseWriter, r *http.Request) {
-
-	articles := Articles{
-		Article{Title: "Test Title", Desc: "Test Description", Content: "Hello World"},
-	}
-	fmt.Println("Endpoint Hit: All Article Endpoint")
-	json.NewEncoder(w).Encode(articles)
-}
-
-func testPostArticles(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Test Post Endpoint Work")
-}
-
-func homePage(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "homepage Endpoint")
-}
-
-func handleRequests() {
-
-	myRouter := mux.NewRouter().StrictSlash(true)
-
-	myRouter.HandleFunc("/", homePage)
-	myRouter.HandleFunc("/articles", allArticles).Methods("GET")
-	myRouter.HandleFunc("/articles", testPostArticles).Methods("POST")
-	log.Fatal(http.ListenAndServe(":8081", myRouter))
-}
-
 func main() {
-	fmt.Println("Go MySQL Tutorial")
 
-	db, err := sql.Open("mysql", "twiclo:twicloPass@tcp(127.0.0.1:23306)/twiclo")
+	if len(os.Args) != 2 {
+		log.Printf("need port number\n")
+		os.Exit(1)
+	}
+
+	// 引数でポートを指定させて受け取る
+	// `go run . 18080` のようなコマンドになる
+	p := os.Args[1]
+	l, err := net.Listen("tcp", ":"+p)
 	if err != nil {
-		panic(err.Error())
+		log.Fatalf("failed to listen port %s: %v", p, err)
 	}
-	defer db.Close()
-	fmt.Println("Successfully connected to MySQL database")
+	if err := run(context.Background(), l); err != nil {
+		log.Printf("failed to terminate server: %v", err)
+		os.Exit(1)
+	}
+}
 
-	result, err := db.Query("SELECT id, name, screen_name, email, password, created_at, updated_at FROM users;")
-	if err != nil {
-		panic(err.Error())
+func run(ctx context.Context, l net.Listener) error {
+	s := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, "Hello, %s!", r.URL.Path[1:])
+		}),
+	}
+	eg, ctx := errgroup.WithContext(ctx)
+
+	eg.Go(func() error {
+		if err := s.Serve(l); err != nil && err != http.ErrServerClosed {
+			log.Printf("failed to close: %+v", err)
+			return err
+		}
+		return nil
+	})
+	<-ctx.Done()
+	if err := s.Shutdown(context.Background()); err != nil {
+		log.Printf("failed to shutdown: %+v", err)
 	}
 
-	var user User
-	for result.Next() {
+	return eg.Wait()
 
-		err = result.Scan(
-			&user.Id,
-			&user.Name,
-			&user.ScreenName,
-			&user.Email,
-			&user.Password,
-			&user.CreatedAt,
-			&user.UpdatedAt,
-		)
-	}
-	if err != nil {
-		panic(err.Error())
-	}
-
-	fmt.Printf("successfully select %s", user)
-
-	result.Close()
-
-	handleRequests()
 }
